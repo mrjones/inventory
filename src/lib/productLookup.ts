@@ -12,13 +12,13 @@ export type ProductMetadata = {
  * Gets product name for a barcode, checking cache first, then Open Food Facts API.
  * Returns the product name string, or null if not found or offline (for new codes).
  */
-export async function getProductName(barcode: string): Promise<ProductMetadata | null> {
+export async function getProductMetadata(barcode: string): Promise<ProductMetadata | null> {
   if (!db) {
     console.error("Firestore DB not initialized.");
     return `Error: DB Not Ready (${barcode})`; // Return barcode if DB fails
   }
   if (!barcode) {
-    console.warn("Empty barcode passed to getProductName.");
+    console.warn("Empty barcode passed to getProductMetadata.");
     return null;
   }
 
@@ -31,7 +31,10 @@ export async function getProductName(barcode: string): Promise<ProductMetadata |
     if (docSnap.exists()) {
       const data = docSnap.data();
       if (data?.name) { // Check if 'name' exists and is truthy
-        console.log(`Cache hit for ${barcode}: ${data.name}`);
+        console.log(`Firebase cache hit for ${barcode}: ${data.name}`);
+
+        // TODO: if lastChecked is old enough, re check?
+
         return {name: data.name, imageUrl: data.imageUrl};
       } else if (data?.lookupStatus === 'not_found' || data?.lookupStatus === 'no_data' || data?.lookupStatus === 'lookup_failed') {
          console.log(`Barcode ${barcode} previously marked as not found/failed.`);
@@ -52,7 +55,6 @@ export async function getProductName(barcode: string): Promise<ProductMetadata |
 
   // 3. Call Open Food Facts API
   console.log(`Cache miss for ${barcode}. Fetching from Open Food Facts API...`);
-  try {
     // Request specific fields to minimize data transfer
     const apiUrl = `https://world.openfoodfacts.org/api/v2/product/${barcode}.json?fields=product_name,brands,image_url,quantity`;
     const response = await fetch(apiUrl, {
@@ -86,22 +88,15 @@ export async function getProductName(barcode: string): Promise<ProductMetadata |
 
     const productName = data.product.product_name;
     const brands = data.product.brands || ''; // Handle potentially missing brands
-    const quantity  = data.product.quantity || ''
-    // Combine brand and name if brand exists
-    const quantitySuffix = quantity ? ` (${quantity}) ` : ''
-    const displayName = (brands ? `${brands} - ${productName}` : productName) + quantitySuffix;
+    const displayName = (brands ? `${brands} - ${productName}` : productName)
 
     console.log(`API lookup success for ${barcode}: ${displayName}`);
 
+    const imageUrl = data.product.image_url || '';
+
     // 5. Update Firestore Cache
-    await setDoc(docRef, { name: displayName, imageUrl: data.product.image_url, lookupStatus: 'found', lastChecked: serverTimestamp() }, { merge: true });
+    await setDoc(docRef, { name: displayName, imageUrl: imageUrl, lookupStatus: 'found', lastChecked: serverTimestamp() }, { merge: true });
 
     return {name: displayName, imageUrl: data.product.image_url};
 
-  } catch (error) {
-    console.error(`Error during API fetch or processing for ${barcode}:`, error);
-    // Cache the failure status on network errors etc.
-    await setDoc(docRef, { name: null, imageUrl: null, lookupStatus: 'lookup_failed', lastChecked: serverTimestamp() }, { merge: true }).catch(e => console.error("Failed to cache lookup failure", e));
-    return null; // Indicate failure
-  }
 }

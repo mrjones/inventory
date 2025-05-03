@@ -1,21 +1,25 @@
 <script lang="ts">
+  import { browser } from '$app/environment'; // Import the browser guard
   import { onMount, onDestroy } from 'svelte';
-//  import { getProductName, ProductMetadata } from '$lib/productLookup';
+//  import { getProductMetadata, ProductMetadata } from '$lib/productLookup';
 
   import * as ProductLookup from '$lib/productLookup'
   import * as ZxingBrowser from '@zxing/browser';
   import * as ZxingLibrary from '@zxing/library';
+  import * as Inventory from '$lib/inventory'
 
   let videoElement: HTMLVideoElement; // Bound to the <video> element
   let scannedCode: string | null = null;
-  let productMetadataForDisplay: ProductMetadatata | null = null; // Add state for the name
+  let productMetadataForDisplay: Inventory.RemoteData<ProductMetadatata> = Inventory.RemoteData.empty<ProductMetadata>();
+  let quantityForDisplay: Inventory.RemoteData<number> = Inventory.RemoteData.empty<number>();
   let isLookingUp = false; // Add state for lookup process
 
   let errorMessage: string | null = null;
   let isLoading = false;
   let scannerControls: ZxingBrowser.IScannerControls | null = null; // To store the controls for stopping
 
-  const codeReader = new ZxingBrowser.BrowserMultiFormatReader();
+  let codeReader: ZxingBrowser.BrowserMultiFormatReader | null = null; // Use let, initialize to null
+
 
   // --- Audio Setup ---
   let audioContext: AudioContext | null = null;
@@ -89,6 +93,20 @@
   // --- End Audio Setup ---
 
   async function startScan() {
+    // Guard against non-browser environment
+    if (!browser) {
+      errorMessage = "Scanning requires a browser environment.";
+      isLoading = false;
+      return;
+    }
+    // Guard against uninitialized codeReader
+    if (!codeReader) {
+      errorMessage = "Scanner not yet initialized.";
+      isLoading = false;
+      console.error("startScan called before codeReader was initialized in onMount.");
+      return;
+    }
+
     scannedCode = null; // Reset previous scan
     errorMessage = null;
     isLoading = true;
@@ -127,17 +145,28 @@
             // --- End Play Beep ---
 
             // --- Call the lookup function ---
-            ProductLookup.getProductName(scannedCode).then(metadata => {
+            console.log('Before calling startLoading, productMetadataForDisplay is:', productMetadataForDisplay); // <-- ADD THIS LOG
+            productMetadataForDisplay.startLoading();
+            productMetadataForDisplay = productMetadataForDisplay;
+            ProductLookup.getProductMetadata(scannedCode).then(metadata => {
               if (metadata) {
                   console.log(`Display Name for ${scannedCode}: ${name}`);
-                  productMetadataForDisplay = metadata;
-                  isLookingUp = false; // Indicate lookup finished
+                  productMetadataForDisplay.finishLoading(metadata);
+                  productMetadataForDisplay = productMetadataForDisplay;
               } else {
                   console.log(`Could not find product name for ${scannedCode}.`);
                   productMetadataForDisplay = {name:`Unknown Product`}; // Provide feedback
-                  isLookingUp = false; // Indicate lookup finished
                   // TODO: Maybe prompt user to enter name here?
               }
+              Inventory.incrementInventory(scannedCode, 1).then(() => {
+                 quantityForDisplay.startLoading();
+                 quantityForDisplay = quantityForDisplay; // svelte reactivity
+                 Inventory.getInventory(scannedCode).then(quantity => {
+                   quantityForDisplay.finishLoading(quantity);
+                   quantityForDisplay = quantityForDisplay; // svelte reactivity
+                   isLookingUp = false;
+                 });
+              });
             });
           }
           if (error) {
@@ -150,12 +179,6 @@
             }
           }
         });
-//      catch(err) {
-//          // Handle errors from getProductName itself if any unhandled ones occur
-//          console.error("Error in getProductName promise:", err);
-//          productNameForDisplay = "Lookup Error";
-//          isLookingUp = false;
-//      };
     } catch (err: any) {
       console.error('Error starting scanner:', err);
       if (err.name === 'NotAllowedError') {
@@ -174,26 +197,53 @@
 
   function stopScan() {
     console.log('Stopping scan...');
-    if (scannerControls) {
-      scannerControls.stop(); // Use the controls object from the decode callback
-      scannerControls = null;
-    } else {
-      // Fallback if controls weren't captured or start failed early
-      codeReader.reset(); // Resets the code reader instance
+    isLoading = false; // Set isLoading false immediately
+
+    // Guard against non-browser / uninitialized reader
+    if (!browser || !codeReader) {
+      console.warn('stopScan called but no codeReader instance available or not in browser.');
+      // Attempt to clean up video stream just in case, though less likely needed
       if (videoElement && videoElement.srcObject) {
-         // Manually stop tracks if needed (though controls.stop() should handle this)
-         const stream = videoElement.srcObject as MediaStream;
-         stream.getTracks().forEach(track => track.stop());
-         videoElement.srcObject = null;
+           const stream = videoElement.srcObject as MediaStream;
+           stream.getTracks().forEach(track => track.stop());
+           videoElement.srcObject = null;
       }
+      return; // Exit if no reader
     }
-    isLoading = false;
+
+    try {
+      // The primary way to stop and release resources
+      codeReader.reset();
+      console.log('codeReader.reset() called successfully in stopScan.');
+    } catch (e) {
+      console.error('Error calling codeReader.reset() in stopScan:', e);
+    }
+
+    // Optional: Clear video source explicitly AFTER reset, though reset should handle it.
+    if (videoElement && videoElement.srcObject) {
+       videoElement.srcObject = null;
+    }
+    scannerControls = null; // Clear this just in case
   }
 
-  // Ensure scanner is stopped when component is destroyed
-  onDestroy(() => {
-    stopScan();
+  onMount(() => {
+    if (browser) {
+      // This code only runs in the browser
+      console.log('Component mounted in browser, initializing codeReader...');
+      codeReader = new ZxingBrowser.BrowserMultiFormatReader();
+      console.log('codeReader initialized:', codeReader);
+    }
+
+    // Return a cleanup function (runs on onDestroy)
+    return () => {
+      console.log('onMount cleanup: Resetting scanner if it exists.');
+      if (browser && codeReader) {
+        codeReader.reset();
+        codeReader = null; // Clear reference
+      }
+    };
   });
+
 
 </script>
 
@@ -216,19 +266,26 @@
   {/if}
 
 {#if scannedCode}
-  <p class="result">
-    Scanned Code: <strong>{scannedCode}</strong><br/>
-    {#if isLookingUp}
-      Product Name: <em>Looking up...</em>
-    {:else if productMetadataForDisplay}
-      Product Name: <strong>{productMetadataForDisplay.name}</strong>
-      {#if productMetadataForDisplay.imageUrl != null}
-        <img src='{productMetadataForDisplay.imageUrl}'/>
+    <ul>
+      <li>Scanned Code: <strong>{scannedCode}</strong></li>
+      {#if productMetadataForDisplay.state == Inventory.State.LOADING}
+        <li>Product Name: <em>Looking up...</em></li>
+      {:else if productMetadataForDisplay.state == Inventory.State.VALID}
+        <li> Product Name: <strong>{productMetadataForDisplay.data.name}</strong></li>
+      {:else}
+        <li>Product Name: N/A</li>
       {/if}
-    {:else}
-      Product Name: <em>Not found or offline</em>
+      {#if quantityForDisplay.state == Inventory.State.VALID}
+        <li>Quantity: {quantityForDisplay.data}</li>
+      {:else if quantityForDisplay.state == Inventory.State.LOADING}
+        <li>Quantity: Loading...</li>
+      {:else}
+        <li>Quantity: N/A</li>
+      {/if}
+    </ul>
+    {#if productMetadataForDisplay.satte == Inventory.State.VALID && productMetadataForDisplay.data.imageUrl != null}
+      <img src='{productMetadataForDisplay.imageUrl}'/>
     {/if}
-  </p>
 {/if}
 </div>
 

@@ -14,13 +14,7 @@
   }
 </script>
 
-<button on:click={() => showScanner = !showScanner}>
-  {#if showScanner} Hide Scanner {:else} Show Scanner {/if}
-</button>
-
-{#if showScanner}
-  <BarcodeScanner />
-{/if}
+<BarcodeScanner />
 
 {#if lastScannedCode}
   <p>Last code scanned: {lastScannedCode}</p>
