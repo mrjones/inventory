@@ -10,8 +10,8 @@
 
   let videoElement: HTMLVideoElement; // Bound to the <video> element
   let scannedCode: string | null = null;
-  let productMetadataForDisplay: Inventory.RemoteData<ProductMetadatata> = Inventory.RemoteData.empty<ProductMetadata>();
-  let quantityForDisplay: Inventory.RemoteData<number> = Inventory.RemoteData.empty<number>();
+  let productMetadataForDisplay: Inventory.RemoteData<ProductLookup.ProductInfo> = Inventory.RemoteData.empty<ProductLookup.ProductInfo>();
+//  let quantityForDisplay: Inventory.RemoteData<number> = Inventory.RemoteData.empty<number>();
   let isLookingUp = false; // Add state for lookup process
 
   let errorMessage: string | null = null;
@@ -158,15 +158,21 @@
                   productMetadataForDisplay = {name:`Unknown Product`}; // Provide feedback
                   // TODO: Maybe prompt user to enter name here?
               }
-              Inventory.incrementInventory(scannedCode, 1).then(() => {
+
+              Inventory.incrementInventoryMutable(scannedCode, 1).then(() => {
+                 console.log("updated inventory");
+              });
+/*
+              Inventory.incrementInventoryLog(scannedCode, 1).then(() => {
                  quantityForDisplay.startLoading();
                  quantityForDisplay = quantityForDisplay; // svelte reactivity
-                 Inventory.getInventory(scannedCode).then(quantity => {
+                 Inventory.getInventoryLog(scannedCode).then(quantity => {
                    quantityForDisplay.finishLoading(quantity);
                    quantityForDisplay = quantityForDisplay; // svelte reactivity
                    isLookingUp = false;
                  });
               });
+              */
             });
           }
           if (error) {
@@ -271,10 +277,12 @@
       {#if productMetadataForDisplay.state == Inventory.State.LOADING}
         <li>Product Name: <em>Looking up...</em></li>
       {:else if productMetadataForDisplay.state == Inventory.State.VALID}
-        <li> Product Name: <strong>{productMetadataForDisplay.data.name}</strong></li>
+        <li> Product Name: <strong>{productMetadataForDisplay.data.metadata.name}</strong></li>
+        <li> Quantity: <strong>{(productMetadataForDisplay.data.quantity || 0) + 1}</strong></li>
       {:else}
         <li>Product Name: N/A</li>
       {/if}
+      <!--
       {#if quantityForDisplay.state == Inventory.State.VALID}
         <li>Quantity: {quantityForDisplay.data}</li>
       {:else if quantityForDisplay.state == Inventory.State.LOADING}
@@ -282,6 +290,7 @@
       {:else}
         <li>Quantity: N/A</li>
       {/if}
+      -->
     </ul>
     {#if productMetadataForDisplay.satte == Inventory.State.VALID && productMetadataForDisplay.data.imageUrl != null}
       <img src='{productMetadataForDisplay.imageUrl}'/>

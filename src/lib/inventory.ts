@@ -1,7 +1,7 @@
-import { addDoc, collection, doc, getDocs, query, serverTimestamp, where } from 'firebase/firestore';
+import { addDoc, collection, doc, getDocs, increment, query, serverTimestamp, updateDoc, where } from 'firebase/firestore';
 import { db } from '$lib/firebase'; // Your initialized Firestore instance
 
-const INVENTORY_COLLECTION = 'product_inventory';
+const METADATA_COLLECTION = 'product_metadata';
 const INVENTORY_LOG = 'inventory_log';
 
 export enum State {
@@ -28,13 +28,13 @@ export class RemoteData<T> {
   }
 
   public finishLoading(value: T) {
-    console.log("finishLoading <- " + value);
+    console.log("finishLoading <- " + JSON.stringify(value));
     this.state = State.VALID;
     this.data = value;
   }
 }
 
-export async function incrementInventory(barcode: string, delta: number) {
+export async function incrementInventoryMutable(barcode: string, delta: number) {
   if (!db) {
     console.error("Firestore DB not initialized.");
     return;
@@ -43,7 +43,25 @@ export async function incrementInventory(barcode: string, delta: number) {
     console.error("Empty barcode passed to incrementInventory.");
     return;
   }
-  console.log("incrementInventory(" + barcode + ", " + delta + ")");
+  console.log("incrementInventoryMutable(" + barcode + ", " + delta + ")");
+
+  const itemRef = doc(db, METADATA_COLLECTION, barcode);
+  await updateDoc(itemRef, {
+    quantity: increment(delta),
+    updated: serverTimestamp(),
+  });
+}
+
+export async function incrementInventoryLog(barcode: string, delta: number) {
+  if (!db) {
+    console.error("Firestore DB not initialized.");
+    return;
+  }
+  if (!barcode) {
+    console.error("Empty barcode passed to incrementInventory.");
+    return;
+  }
+  console.log("incrementInventoryLog(" + barcode + ", " + delta + ")");
 
   await addDoc(collection(db, INVENTORY_LOG), {
     barcode: barcode,
@@ -51,7 +69,8 @@ export async function incrementInventory(barcode: string, delta: number) {
     timestamp: serverTimestamp(),
   });
 }
-export async function getInventory(barcode: string) {
+
+export async function getInventoryLog(barcode: string) {
   if (!db) {
     console.error("Firestore DB not initialized.");
     return;
